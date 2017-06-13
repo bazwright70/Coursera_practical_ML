@@ -1,30 +1,218 @@
 ---
-title: "Coursera Practical ML project"
+title: "Practical Machine Learning"
 author: "Brian Wright"
-date: "30 May 2017"
-output: html_document
+date: "5 June 2017"
+output: 
+  html_document: 
+    keep_md: yes
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
+library(caret)
+library(randomForest)
+library(plyr)
+library(knitr)
+
 ```
 
-## R Markdown
+## Question  
+  The question we are trying to answer is, can we predict the type of exercise a person is carrying out based on data from positional sensors.
+  
+    
+## Data  
+The data we will use comes from sensors placed on a subjects body and exercise equipment. 
+ We will download 2 datasets, a training and test set. The training set will be further split into training and a second test set for building our model. The downloaded test set will be used for validation of our model.
+ After examining the dataframe summary from the  raw csv file we can see missing values denoted by character strings "NA","" and "#DIV/0!" which we need to set as NA values when importing the file. We will import the file with stringsAsFactors = FALSE as the predictors are mainly numerical represented as character strings. We will then convert the character outome variable into a factor.
+ 
+ 
+## Exploration
+ The variable of interest is a categorical variable with 5 possible levels and the predictor vaiables are positive and negative numeric values.  
+ If we look at the split of outcomes accross the 5 classes we can see they are fairly balanced.  
+ 
+```{r load_data}
+## data load
+pml <- read.csv("pml-training.csv",
+                na.strings = c(""," ","#DIV/0!","NA"),
+                stringsAsFactors = FALSE)
+names(pml) <- tolower(names(pml))
+classe <- as.factor(pml$classe)
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```
+```{r}
+table(classe)
+```
+ When we look at the dataframe summary it shows a large number of NA values in many of the features. One particular set of features which contain all NA values are logicals so we will remove these features.  It is important that we understand what the remaining NA values represent in our data. As the numerical values in the dataframe represent numerical sensor output, it is possible that an NA value represents a lack of output or output below a noise threshold. We will look at the number of NA values across the 5 classes to to see if the are biased towards any particular classe. Although tree models can be built by internally handling NA values, we will need to impute values in place of NA's to allow us to look for possible colinearity and linear combinations.  
+ 
+```{r, echo = FALSE}
+## find all logical features and remove
+logi.cols <- as.integer(which(sapply(pml, is.logical) ))    
+pml[,logi.cols] <- NULL
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## rows per class
+cl.sums <- data.frame(table(pml$classe))
+## NA's by column and classe
+na.df <- aggregate(pml, by = list(pml$classe), 
+                FUN = function(x) sum(is.na(x)) )
+## ratio of NA to rows
+ratio <- rowSums(na.df[-1])/cl.sums[2]
 
-```{r cars}
-summary(cars)
+```
+```{r, echo = FALSE, eval = TRUE}
+##data frame of NA split
+na.sums <- data.frame(na.df[1],
+                      rowSums(na.df[-1]),
+                      cl.sums[2],
+                      ratio)
+names(na.sums) <- c("classe", " NA's","obs",
+"NA per obs")
+kable(na.sums,title = "NA split across classes")
+   ## remove classe variable from pml df
+pml$classe <- NULL
+```  
+
+ The table shows all classes have an even proportion of NA values in the observations. We can begin building our models using the theory that NA's relate to lack of sensor output and therefore a directional output of zero we won't bias any of the classes unfairly. We can then further test our models by imputing via knn imputation preprocessing if nescessary. 
+ 
+## Dataset Transformation 
+ We will first transform out dataset to reduce those features that  don't add information to our model. We will first remove features such as indexes, names, times. This will reduce the features by 7. Once we have imputed our NA values with zeros we be able to build a correlation matrix  colinearity, near zero variance and linear combinations. These add to the variance in the model but add no information. If we preprocess with Caret's findCorrelation function on our correlation matrix from the dataframe predictors we find 26 features with a correlation of 0.90 or more. The nzv function will find features with zero variance or near to zero variance which can then be removed. 
+ The predictors are numerical with positive and negative values and are on different scales. We could use preprocessing functions to scale, center and transform the predictors but we will use Tree based models which are robust against outliers and predictor scale, unlike regression based models.   
+ 
+```{r}
+## remove features not related to model
+pml <- pml[-c(1:7)]
+## impute zero value to replace NA
+pml[is.na(pml)] <- 0
+
+## remove features zero / near zero variance
+nzv.vec <- nzv(pml)
+pml <- pml[-nzv.vec]
+## preprocess NA with knn impute
+    knn.imp <- preProcess(pml, method = c("knnImpute"))
+    pml <- predict(knn.imp, pml)
+## build correlation matrix. Find/remove correlated features
+
+cor.mat <- cor(pml)
+cor.vec <- findCorrelation(cor.mat)
+pml <- pml[,-cor.vec]
+pml$classe <- classe
+```  
+    
+   
+## Model Building  
+ We will attempt find the most accurate model which which can reliably predict on the test set with least complexity. We will do this using the Caret package. The 3 models we will use will be: 
+   
+   
+ * Single decision tree  - ctree
+ * Bagged decision tree  - treebag
+ * Random Forest         - rf 
+   
+We will use 10 fold cross validation and caret's default tuning values for all 3 models. We can then attempt to improve our models using different tuning parameters if nescessary.  
+ To reduce model processing time we will make use of Caret's
+parallel processing abilites by using the doParallel package. This will allow model processing using all 4 processor cores (Intel core i5) which reduces model building time.  
+ Although we have a separate testing set, we will use this later for model validation. We will split our training data frame into a train and test set.  
+  
+```{r parallel_processing, warning=FALSE, message= FALSE}
+## enable parallel processing
+library(parallel)
+library(doParallel)
+no.cores <- detectCores() 
+cl <- makeCluster(no.cores)
+registerDoParallel(cl)
+```
+ 
+```{r training_options, warning=FALSE, message = FALSE}
+## build training/testset
+set.seed(1234)
+index <- createDataPartition(pml$classe, p = 0.7, list = FALSE)
+train <- pml[index,]
+test <- pml[-index,]
+
+
+## training control options
+ctrl <- trainControl(method = "cv",
+                     verboseIter = TRUE)
+
+```  
+
+Single tree with 'ctree'  
+
+
+```{r tree_model, warning= FALSE,echo=FALSE, message= FALSE}
+## build ctree model, caret defaults
+mod.ctree <- train(classe ~ ., data = train,
+                   method = "ctree",
+                   trControl = ctrl)
+```
+```{r predict_tree, warnings = FALSE}
+pred.ctree <- predict(mod.ctree, newdata = test)
+confusionMatrix(pred.ctree, test$classe)[[3]][1]
+```  
+  
+Bagged Decision Tree with 'treebag'
+  
+```{r tbag_model, warning= FALSE,echo= FALSE, message= FALSE}
+## build  model, caret defaults
+mod.tbag <- train(classe ~ ., data = train,
+                   method = "treebag",
+                   trControl = ctrl)
+```
+```{r predict_rf, warnings = FALSE, message=FALSE}
+pred.tbag <- predict(mod.tbag, newdata = test)
+confusionMatrix(pred.tbag, test$classe)[[3]][1]
+```  
+Random Forest with 'randomforest'  
+
+  
+```{r rf_model, warning= FALSE,echo=FALSE, message=FALSE}
+## build ctree model, caret defaults
+mod.rf <- train(classe ~ ., data = train,
+                   method = "rf",
+                   trControl = ctrl)
+```  
+```{r predict_xgb, warnings = FALSE, message=FALSE}
+pred.rf <- predict(mod.rf, newdata = test)
+confusionMatrix(pred.rf, test$classe)[[3]][1]
+```  
+## Cross-Validaion   
+We will look at the Cross Validation accuracy for the random forest model for. The plot shows the accuracy for various values of the tuning parameter 'mtry' which determines how many random predictors each of the individual trees will use to build the model.  
+
+```{r}
+plot(mod.rf)
+```  
+
+The deafult settings for caret uses three different values for mtry,
+2,12 and 23. A good value for mtry is the rounded down squareroot of the number of predictors. This would be an mtry of
+  
+```{r}
+ctrl <- trainControl(method = "cv",
+                     number = 10,
+                     verboseIter= FALSE,
+                     rfgrid <- expand.grid(mtry= c(4,6,7,8,10,12)))
+##train model
+mod.rf.tun <- train(classe ~., data = train, 
+                method = "rf",
+                trControl = ctrl,
+                tuneGrid = rfgrid)
+plot(mod.rf.tun)
+
+pred.rf.tun <- predict(mod.rf.tun, test)
+confusionMatrix(pred.rf.tun, test$classe)
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+
+```{r cv, echo = FALSE, message= FALSE}
+library(ggplot2)
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+## end parallel computing
+stopCluster(cl)
+registerDoSEQ()
+```
+
+ 
+
