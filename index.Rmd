@@ -71,10 +71,11 @@ kable(na.sums,title = "NA split across classes")
 pml$classe <- NULL
 ```  
 
- The table shows all classes have an even proportion of NA values in the observations. We can begin building our models using the theory that NA's relate to lack of sensor output and therefore a directional output of zero we won't bias any of the classes unfairly. We can then further test our models by imputing via knn imputation preprocessing if nescessary. 
+ The table shows all classes have an even proportion of NA values in the observations. We can begin building our models using the theory that NA's relate to lack of sensor output and therefore a directional output of zero we won't bias any of the classes unfairly.  
+ 
  
 ## Dataset Transformation 
- We will first transform out dataset to reduce those features that  don't add information to our model. We will first remove features such as indexes, names, times. This will reduce the features by 7. Once we have imputed our NA values with zeros we be able to build a correlation matrix  colinearity, near zero variance and linear combinations. These add to the variance in the model but add no information. If we preprocess with Caret's findCorrelation function on our correlation matrix from the dataframe predictors we find 26 features with a correlation of 0.90 or more. The nzv function will find features with zero variance or near to zero variance which can then be removed. 
+ We will first transform out dataset to reduce those features that don't add information to our model. We will first remove features such as indexes, names, times. This will reduce the features by 7. Once we have imputed our NA values with zeros we be able to build a correlation matrix  colinearity, near zero variance and linear combinations. These add to the variance in the model but add no information. If we preprocess with Caret's findCorrelation function on our correlation matrix from the dataframe predictors we find 26 features with a correlation of 0.90 or more. The nzv function will find features with zero variance or near to zero variance which can then be removed. 
  The predictors are numerical with positive and negative values and are on different scales. We could use preprocessing functions to scale, center and transform the predictors but we will use Tree based models which are robust against outliers and predictor scale, unlike regression based models.   
  
 ```{r}
@@ -87,8 +88,8 @@ pml[is.na(pml)] <- 0
 nzv.vec <- nzv(pml)
 pml <- pml[-nzv.vec]
 ## preprocess NA with knn impute
-    knn.imp <- preProcess(pml, method = c("knnImpute"))
-    pml <- predict(knn.imp, pml)
+    # knn.imp <- preProcess(pml, method = c("knnImpute"))
+    # pml <- predict(knn.imp, pml)
 ## build correlation matrix. Find/remove correlated features
 
 cor.mat <- cor(pml)
@@ -134,7 +135,7 @@ ctrl <- trainControl(method = "cv",
 
 ```  
 
-Single tree with 'ctree'  
+Single tree with 'ctree'.  
 
 
 ```{r tree_model, warning= FALSE,echo=FALSE, message= FALSE}
@@ -148,7 +149,7 @@ pred.ctree <- predict(mod.ctree, newdata = test)
 confusionMatrix(pred.ctree, test$classe)[[3]][1]
 ```  
   
-Bagged Decision Tree with 'treebag'
+Bagged Decision Tree with 'treebag'.
   
 ```{r tbag_model, warning= FALSE,echo= FALSE, message= FALSE}
 ## build  model, caret defaults
@@ -160,7 +161,7 @@ mod.tbag <- train(classe ~ ., data = train,
 pred.tbag <- predict(mod.tbag, newdata = test)
 confusionMatrix(pred.tbag, test$classe)[[3]][1]
 ```  
-Random Forest with 'randomforest'  
+Random Forest with 'randomforest'.  
 
   
 ```{r rf_model, warning= FALSE,echo=FALSE, message=FALSE}
@@ -180,14 +181,14 @@ We will look at the Cross Validation accuracy for the random forest model for. T
 plot(mod.rf)
 ```  
 
-The deafult settings for caret uses three different values for mtry,
-2,12 and 23. A good value for mtry is the rounded down squareroot of the number of predictors. This would be an mtry of
+The default settings for caret used three different values for mtry, 2,12 and 23. A recommended value for mtry for a classification model is the rounded squareroot of the number of predictors. This would be an mtry of 6. We will run the Random Forest algoritm again with mtry values ranging from 2 to 23 and including our recommended value of 6. We will again plot the cross validation errors to see how they compare to the default Caret values 
   
 ```{r}
+set.seed(1234)
 ctrl <- trainControl(method = "cv",
                      number = 10,
                      verboseIter= FALSE,
-                     rfgrid <- expand.grid(mtry= c(4,6,7,8,10,12)))
+                     rfgrid <- expand.grid(mtry= c(2,4,6,8,12,16,23)))
 ##train model
 mod.rf.tun <- train(classe ~., data = train, 
                 method = "rf",
