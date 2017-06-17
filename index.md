@@ -1,20 +1,8 @@
----
-title: "Practical Machine Learning"
-author: "Brian Wright"
-date: "5 June 2017"
-output: 
-  html_document: 
-    keep_md: yes
----
+# Practical Machine Learning
+Brian Wright  
+5 June 2017  
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
-library(caret)
-library(randomForest)
-library(plyr)
-library(knitr)
 
-```
 
 ## Question  
   The question we are trying to answer is, can we predict the type of exercise a person is carrying out based on data from positional sensors.
@@ -30,44 +18,24 @@ The data we will use comes from sensors placed on a subjects body and exercise e
  The variable of interest is a categorical variable with 5 possible levels and the predictor vaiables are positive and negative numeric values.  
  If we look at the split of outcomes accross the 5 classes we can see they are fairly balanced.  
  
-```{r load_data}
-## data load
-pml <- read.csv("pml-training.csv",
-                na.strings = c(""," ","#DIV/0!","NA"),
-                stringsAsFactors = FALSE)
-names(pml) <- tolower(names(pml))
-classe <- as.factor(pml$classe)
-# display class factor variable split
-table(classe)
-```  
+
+```
+## classe
+##    A    B    C    D    E 
+## 5580 3797 3422 3216 3607
+```
 
 
  When we look at the dataframe summary it shows a large number of NA values in many of the features. One particular set of features which contain all NA values are logicals so we will remove these features.  It is important that we understand what the remaining NA values represent in our data. As the numerical values in the dataframe represent numerical sensor output, it is possible that an NA value represents a lack of output or output below a noise threshold. We will look at the number of NA values across the 5 classes to to see if the are biased towards any particular classe. Although tree models can be built by internally handling NA values, we will need to impute values in place of NA's to allow us to look for possible colinearity and linear combinations.  
  
-```{r NA split , echo = FALSE}
-## find all logical features and remove
-logi.cols <- as.integer(which(sapply(pml, is.logical) ))    
-pml[,logi.cols] <- NULL
 
-## rows per class
-cl.sums <- data.frame(table(pml$classe))
-## NA's by column and classe
-na.df <- aggregate(pml, by = list(pml$classe), 
-                FUN = function(x) sum(is.na(x)) )
-## ratio of NA to rows
-ratio <- rowSums(na.df[-1])/cl.sums[2]
-
-##data frame of NA split
-na.sums <- data.frame(na.df[1],
-                      rowSums(na.df[-1]),
-                      cl.sums[2],
-                      ratio)
-names(na.sums) <- c("classe", " NA's","obs",
-"NA per obs")
-kable(na.sums,title = "NA split across classes")
-   ## remove classe variable from pml df
-pml$classe <- NULL
-```  
+classe      NA's    obs   NA per obs
+-------  -------  -----  -----------
+A         514614   5580     92.22473
+B         349662   3797     92.08902
+C         315265   3422     92.12887
+D         295984   3216     92.03483
+E         331845   3607     92.00028
 
 
  The table shows all classes have an even proportion of NA values in the observations. We can begin building our models using the theory that NA's relate to lack of sensor output and therefore a directional output of zero we won't bias any of the classes unfairly.  
@@ -77,25 +45,7 @@ pml$classe <- NULL
  We will first transform out dataset to reduce those features that don't add information to our model. We will first remove features such as indexes, names, times. This will reduce the features by 7. Once we have imputed our NA values with zeros we be able to build a correlation matrix  colinearity, near zero variance and linear combinations. These add to the variance in the model but add no information. If we preprocess with Caret's findCorrelation function on our correlation matrix from the dataframe predictors we find 26 features with a correlation of 0.90 or more. The nzv function will find features with zero variance or near to zero variance which can then be removed. 
  The predictors are numerical with positive and negative values and are on different scales. We could use preprocessing functions to scale, center and transform the predictors but we will use Tree based models which are robust against outliers and predictor scale, unlike regression based models.   
  
-```{r feature reduction}
-## remove features not related to model
-pml <- pml[-c(1:7)]
-## impute zero value to replace NA
-pml[is.na(pml)] <- 0
 
-## remove features zero / near zero variance
-nzv.vec <- nzv(pml)
-pml <- pml[-nzv.vec]
-## preprocess NA with knn impute
-    # knn.imp <- preProcess(pml, method = c("knnImpute"))
-    # pml <- predict(knn.imp, pml)
-## build correlation matrix. Find/remove correlated features
-
-cor.mat <- cor(pml)
-cor.vec <- findCorrelation(cor.mat)
-pml <- pml[,-cor.vec]
-pml$classe <- classe
-```  
     
    
 ## Model Building  
@@ -111,126 +61,97 @@ We will use 10 fold cross validation and caret's default tuning values for all 3
 parallel processing abilites by using the doParallel package. This will allow model processing using all 4 processor cores (Intel core i5) which reduces model building time.  
  Although we have a separate testing set, we will use this later for model validation. We will split our training data frame into a train and test set.  
   
-```{r parallel_processing, warning=FALSE, message= FALSE}
-## enable parallel processing
-library(parallel)
-library(doParallel)
-no.cores <- detectCores() 
-cl <- makeCluster(no.cores)
-registerDoParallel(cl)
-```
+
  
-```{r training_options, warning=FALSE, message = FALSE}
-## build training/testset
-set.seed(1234)
-index <- createDataPartition(pml$classe, p = 0.7, list = FALSE)
-train <- pml[index,]
-test <- pml[-index,]
 
-
-## training control options
-ctrl <- trainControl(method = "cv",
-                     verboseIter = TRUE)
-
-```  
 
 Single tree with 'ctree'.  
 
 
-```{r tree_model, warning= FALSE,echo=FALSE, message= FALSE}
-## build ctree model, caret defaults
-set.seed(1234)
-mod.ctree <- train(classe ~ ., data = train,
-                   method = "ctree",
-                   trControl = ctrl)
+
 ```
-```{r predict_tree, warnings = FALSE}
-pred.ctree <- predict(mod.ctree, newdata = test)
-confusionMatrix(pred.ctree, test$classe)[[3]][1]
-```  
+## Aggregating results
+## Selecting tuning parameters
+## Fitting mincriterion = 0.5 on full training set
+```
+
+```
+##  Accuracy 
+## 0.8900595
+```
   
 Bagged Decision Tree with 'treebag'.
   
-```{r tbag_model, warning= FALSE,echo= FALSE, message= FALSE}
-## build  model, caret defaults
-set.seed(1234)
-mod.tbag <- train(classe ~ ., data = train,
-                   method = "treebag",
-                   trControl = ctrl)
+
 ```
-```{r predict_tbag, warnings = FALSE, message=FALSE}
-pred.tbag <- predict(mod.tbag, newdata = test)
-confusionMatrix(pred.tbag, test$classe)[[3]][1]
-```  
+## Aggregating results
+## Fitting final model on full training set
+```
+
+```
+##  Accuracy 
+## 0.9899745
+```
 Random Forest with 'randomforest'.  
 
   
-```{r rf_model, warning= FALSE,echo=FALSE, message=FALSE}
-## build ctree model, caret defaults
-set.seed(1234)
-mod.rf <- train(classe ~ ., data = train,
-                   method = "rf",
-                   trControl = ctrl)
-```  
-```{r predict_rf, warnings = FALSE, message=FALSE}
-pred.rf <- predict(mod.rf, newdata = test)
-confusionMatrix(pred.rf, test$classe)[[3]][1]
-```  
+
+```
+## Aggregating results
+## Selecting tuning parameters
+## Fitting mtry = 23 on full training set
+```
+
+```
+##  Accuracy 
+## 0.9950722
+```
 ## Cross-Validaion   
 We will look at the Cross Validation accuracy for the random forest model for. The plot shows the accuracy for various values of the tuning parameter 'mtry' which determines how many random predictors each of the individual trees will use to build the model.  
 
-```{r plot first rf model}
-plot(mod.rf)
-```  
+![](index_files/figure-html/plot first rf model-1.png)<!-- -->
 
 The default settings for caret used three different values for mtry, 2,23 and 46. A recommended value for mtry for a classification model is the rounded squareroot of the number of predictors. This would be an mtry of 6. We will run the Random Forest algoritm again with 7 mtry values ranging from 2 to 23 and including our recommended value of 6. We will again plot the cross validation errors to see how they compare to the default Caret values.  
 
   
-```{r tune rf model, warning=FALSE, message= FALSE}
-
-# add tuning grid for mtry values
-set.seed(1234)
-ctrl <- trainControl(method = "cv",
-                     number = 10,
-                     verboseIter= FALSE,
-                     rfgrid <- expand.grid(mtry= c(2,4,6,8,12,16,23)))
-##train model
-mod.rf.tun <- train(classe ~., data = train, 
-                method = "rf",
-                trControl = ctrl,
-                tuneGrid = rfgrid)
-plot(mod.rf.tun)
-pred.rf.tun <- predict(mod.rf.tun, test)
-
-```   
+![](index_files/figure-html/tune rf model-1.png)<!-- -->
 Using cross validation, the model was chosen using which resulted in the best accuracy using the different values of mtry from the tuning grid. An mtry value of 12 predictors gives the smallest cross validation error.
-```{r final model}
-confusionMatrix(pred.rf.tun, test$classe)[[3]][1]
+
+```
+## Accuracy 
+## 0.995582
 ```
 
   
 ## Test set Predictions  
 Now we have a model which looks to have a good cross validation accuracy we can can test it againt the pml-testing dataset which we left out for model validation.  
 
-```{r validation et, echo= FALSE, message= FALSE,      warning=FALSE}  
-## load validation test set
-valid <- read.csv("pml-testing.csv",
-                na.strings = c(""," ","#DIV/0!","NA"),
-                stringsAsFactors = FALSE)
-names(valid) <- tolower(names(valid))
-##
-## run tuned model against valid dataset
-pred.valid <- predict(mod.rf.tun, newdata = valid)
-##  display data predictions
-data.frame(Case = 1:20, Prediction = pred.valid,
-           row.names = NULL)
+
+```
+##    Case Prediction
+## 1     1          B
+## 2     2          A
+## 3     3          B
+## 4     4          A
+## 5     5          A
+## 6     6          E
+## 7     7          D
+## 8     8          B
+## 9     9          A
+## 10   10          A
+## 11   11          B
+## 12   12          C
+## 13   13          B
+## 14   14          A
+## 15   15          E
+## 16   16          E
+## 17   17          A
+## 18   18          B
+## 19   19          B
+## 20   20          B
 ```
 
-```{r}
-## end parallel computing
-stopCluster(cl)
-registerDoSEQ()
-```
+
 
  
 
